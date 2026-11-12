@@ -1,0 +1,129 @@
+<!DOCTYPE html>
+<html>
+<head>
+  <base target="_blank">
+  <meta charset="utf-8">
+  <style>
+    body { font: 14px Arial, sans-serif; padding: 12px; color: #202124; }
+    label { display: block; margin-bottom: 12px; }
+    input:not([type=checkbox]) {
+      box-sizing: border-box; display: block; width: 100%; padding: 6px; margin-top: 4px;
+    }
+    button { padding: 6px 10px; cursor: pointer; }
+    button:disabled { cursor: default; }
+    fieldset { margin: 0 0 12px; }
+    fieldset label { margin: 5px 0; }
+    #preview { overflow-wrap: anywhere; }
+    #status { color: #3c4043; }
+    #status.error { color: #a50e0e; }
+  </style>
+</head>
+<body>
+  <form id="folder-form">
+    <label>Drive folder link or ID
+      <input id="folder" required>
+    </label>
+    <button type="submit" id="load">Load folder</button>
+  </form>
+  <p id="preview" hidden></p>
+  <form id="entry-form" hidden>
+    <label>CD number
+      <input id="cd" type="number" min="1" step="1" required>
+    </label>
+    <label>Case / block
+      <input id="block" required>
+    </label>
+    <fieldset>
+      <legend>Calibration taps confirmed in the TEM log</legend>
+      <label><input type="checkbox" name="tap" value="0.36"> 0.36 (2,000×)</label>
+      <label><input type="checkbox" name="tap" value="0.58"> 0.58 (3,000×)</label>
+      <label><input type="checkbox" name="tap" value="1.1"> 1.1 (7,500×)</label>
+      <label><input type="checkbox" name="tap" value="2.9"> 2.9 (15,000×)</label>
+    </fieldset>
+    <label>TEM log reference
+      <input id="reference" placeholder="e.g. 2001 TEM Log Sheets, pg. 102">
+    </label>
+    <button type="submit" id="save">Save to archive log</button>
+  </form>
+  <p id="status" role="status"></p>
+  <script>
+    const folderForm = document.getElementById('folder-form');
+    const entryForm = document.getElementById('entry-form');
+    const folder = document.getElementById('folder');
+    const preview = document.getElementById('preview');
+    const status = document.getElementById('status');
+    const cd = document.getElementById('cd');
+    const block = document.getElementById('block');
+    const reference = document.getElementById('reference');
+    let folderId;
+
+    function showStatus(message, error = false) {
+      status.textContent = message;
+      status.classList.toggle('error', error);
+    }
+
+    function setBusy(busy) {
+      for (const control of [...folderForm.elements, ...entryForm.elements]) {
+        control.disabled = busy;
+      }
+    }
+
+    function clearEntry() {
+      folderId = null;
+      preview.hidden = true;
+      entryForm.hidden = true;
+      entryForm.reset();
+      showStatus('');
+    }
+
+    function onFailure(error) {
+      setBusy(false);
+      showStatus(error.message, true);
+    }
+
+    folder.addEventListener('input', clearEntry);
+    folderForm.addEventListener('submit', event => {
+      event.preventDefault();
+      clearEntry();
+      setBusy(true);
+      showStatus('Loading folder…');
+      google.script.run.withSuccessHandler(result => {
+        folderId = result.id;
+        cd.value = result.cd;
+        block.value = result.block;
+        const details = [result.path, result.imageCount + ' image(s) directly in this folder.'];
+        if (result.samples.length) details.push('Examples: ' + result.samples.join(', '));
+        if (result.folderCount && !result.imageCount) {
+          details.push('Check that you selected the individual case/block folder.');
+        }
+        preview.textContent = details.join(' ');
+        preview.hidden = false;
+        entryForm.hidden = false;
+        setBusy(false);
+        showStatus('');
+      }).withFailureHandler(onFailure).inspectArchiveFolder(folder.value);
+    });
+
+    entryForm.addEventListener('submit', event => {
+      event.preventDefault();
+      if (!folderId) return;
+      const entry = {
+        folderId,
+        cd: cd.value,
+        block: block.value,
+        taps: new FormData(entryForm).getAll('tap'),
+        reference: reference.value,
+      };
+      setBusy(true);
+      showStatus('Saving…');
+      google.script.run.withSuccessHandler(result => {
+        setBusy(false);
+        clearEntry();
+        folder.value = '';
+        showStatus(result.action + ' row ' + result.row + ' in the archive log.');
+        folder.focus();
+      }).withFailureHandler(onFailure).saveArchiveFolder(entry);
+    });
+  </script>
+</body>
+</html>
